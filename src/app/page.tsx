@@ -2,7 +2,8 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 import {
-  fetchLogs, uploadLog, deleteLog, analyzeLog,
+import {
+  fetchLogs, uploadLog, deleteLog, analyzeLog, downloadResult,
   formatBytes, formatDuration,
   type LogFile, type AnalysisResult, type AnalyzeParams,
 } from '@/lib/api'
@@ -606,14 +607,17 @@ export default function Home() {
                   </div>
 
                   {result._meta && (
-                    <div className="glass-card p-4">
-                      <p className="text-xs font-mono mb-2" style={{ color: 'rgba(255,255,255,0.4)' }}>RESULT SAVED</p>
-                      <div className="flex items-start gap-2 cursor-pointer" onClick={async () => {
-  const res = await fetch(`/api/results`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ filename: result._meta!.result_file }),
-})
+  <div className="glass-card p-4">
+    <p className="text-xs font-mono mb-2" style={{ color: 'rgba(255,255,255,0.4)' }}>RESULT SAVED</p>
+    <div className="flex items-start gap-2 cursor-pointer" onClick={async () => {
+      const blob = await downloadResult(result._meta!.result_file)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = result._meta!.result_file
+      a.click()
+      URL.revokeObjectURL(url)
+    }}>
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
