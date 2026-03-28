@@ -1,4 +1,6 @@
-const BASE = '/api'
+const BASE = process.env.NEXT_PUBLIC_API_URL
+  ? `${process.env.NEXT_PUBLIC_API_URL}/api`
+  : '/api'
 
 export interface LogFile {
   name: string
