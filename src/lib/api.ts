@@ -64,27 +64,22 @@ export async function fetchLogs(): Promise<LogFile[]> {
 }
 
 export async function uploadLog(file: File): Promise<void> {
-  const form = new FormData()
-  const cleanedContent = await file.text().then(text =>
-    new Blob([text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')], { type: 'text/plain' })
-  )
-  form.append('file', cleanedContent, file.name)
+  const text = await file.text()
+  const cleaned = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+  const encoded = btoa(encodeURIComponent(cleaned))
   try {
-    const res = await fetch(`${BASE}/logs/upload`, { method: 'POST', body: form })
+    const res = await fetch(`${BASE}/logs/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: file.name, content: encoded }),
+    })
     if (!res.ok) {
       let errMsg = 'Upload failed'
-      try {
-        const d = await res.json()
-        errMsg = d.error || errMsg
-      } catch {
-        errMsg = `Upload failed with status ${res.status}`
-      }
+      try { const d = await res.json(); errMsg = d.error || errMsg } catch {}
       throw new Error(errMsg)
     }
   } catch (err: any) {
-    if (err.message.includes('fetch')) {
-      throw new Error('Cannot reach backend — is the Flask server running?')
-    }
+    if (err.message.includes('fetch')) throw new Error('Cannot reach backend — is the Flask server running?')
     throw err
   }
 }
