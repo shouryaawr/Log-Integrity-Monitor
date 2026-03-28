@@ -116,7 +116,7 @@ export async function analyzeLog(params: AnalyzeParams): Promise<AnalysisResult>
 }
 
 export async function fetchResults(): Promise<{ name: string; size: number; modified: string }[]> {
-  const res = await fetch(`${BASE}/results`)
+  const res = await fetch(`${BASE}/results/list`)
   if (!res.ok) throw new Error('Failed to fetch results')
   const data = await res.json()
   return data.results
