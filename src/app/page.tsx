@@ -609,7 +609,7 @@ export default function Home() {
                     <div className="glass-card p-4">
                       <p className="text-xs font-mono mb-2" style={{ color: 'rgba(255,255,255,0.4)' }}>RESULT SAVED</p>
                       <div className="flex items-start gap-2 cursor-pointer" onClick={async () => {
-  const res = await fetch(`/api/results/${encodeURIComponent(result._meta!.result_file)}`)
+  const res = await fetch(`/api/results?filename=${encodeURIComponent(result._meta!.result_file)}`)
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
