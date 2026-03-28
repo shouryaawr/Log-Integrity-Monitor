@@ -66,10 +66,23 @@ export async function fetchLogs(): Promise<LogFile[]> {
 export async function uploadLog(file: File): Promise<void> {
   const form = new FormData()
   form.append('file', file)
-  const res = await fetch(`${BASE}/logs/upload`, { method: 'POST', body: form })
-  if (!res.ok) {
-    const d = await res.json()
-    throw new Error(d.error || 'Upload failed')
+  try {
+    const res = await fetch(`${BASE}/logs/upload`, { method: 'POST', body: form })
+    if (!res.ok) {
+      let errMsg = 'Upload failed'
+      try {
+        const d = await res.json()
+        errMsg = d.error || errMsg
+      } catch {
+        errMsg = `Upload failed with status ${res.status}`
+      }
+      throw new Error(errMsg)
+    }
+  } catch (err: any) {
+    if (err.message.includes('fetch')) {
+      throw new Error('Cannot reach backend — is the Flask server running?')
+    }
+    throw err
   }
 }
 
@@ -79,16 +92,29 @@ export async function deleteLog(filename: string): Promise<void> {
 }
 
 export async function analyzeLog(params: AnalyzeParams): Promise<AnalysisResult> {
-  const res = await fetch(`${BASE}/analyze`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  })
-  if (!res.ok) {
-    const d = await res.json()
-    throw new Error(d.error || 'Analysis failed')
+  try {
+    const res = await fetch(`${BASE}/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    })
+    if (!res.ok) {
+      let errMsg = 'Analysis failed'
+      try {
+        const d = await res.json()
+        errMsg = d.error || errMsg
+      } catch {
+        errMsg = `Analysis failed with status ${res.status}`
+      }
+      throw new Error(errMsg)
+    }
+    return res.json()
+  } catch (err: any) {
+    if (err.message.includes('fetch')) {
+      throw new Error('Cannot reach backend — is the Flask server running?')
+    }
+    throw err
   }
-  return res.json()
 }
 
 export async function fetchResults(): Promise<{ name: string; size: number; modified: string }[]> {
