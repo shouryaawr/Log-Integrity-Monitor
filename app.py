@@ -76,6 +76,12 @@ def upload_log():
     safe_name = Path(f.filename).name  # strip any directory traversal
     dest = LOGS_DIR / safe_name
     f.save(str(dest))
+    # Re-read and re-write with explicit UTF-8 encoding to sanitize any encoding issues
+    try:
+        content = dest.read_bytes()
+        dest.write_text(content.decode('utf-8', errors='replace'), encoding='utf-8')
+    except Exception as e:
+        logger.warning("Could not sanitize file encoding: %s", e)
     logger.info("Uploaded log file: %s (%d bytes)", safe_name, dest.stat().st_size)
 
     return jsonify({"message": "File uploaded", "filename": safe_name}), 201
