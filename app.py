@@ -64,26 +64,31 @@ def list_logs():
 
 
 @app.route("/api/logs/upload", methods=["POST"])
+@app.route("/api/logs/upload", methods=["POST"])
 def upload_log():
-    """Upload a log file and save it to LOGS_DIR."""
-    if "file" not in request.files:
-        return jsonify({"error": "No file part in request"}), 400
+    from urllib.parse import unquote
+    import base64
 
-    f = request.files["file"]
-    if f.filename == "":
-        return jsonify({"error": "Empty filename"}), 400
+    data = request.get_json(silent=True) or {}
+    filename = data.get("filename")
+    content_encoded = data.get("content")
 
-    safe_name = Path(f.filename).name  # strip any directory traversal
+    if not filename or not content_encoded:
+        return jsonify({"error": "filename and content are required"}), 400
+
+    safe_name = Path(filename).name
     dest = LOGS_DIR / safe_name
-    f.save(str(dest))
-    # Re-read and re-write with explicit UTF-8 encoding to sanitize any encoding issues
-    try:
-        content = dest.read_bytes()
-        dest.write_text(content.decode('utf-8', errors='replace'), encoding='utf-8')
-    except Exception as e:
-        logger.warning("Could not sanitize file encoding: %s", e)
-    logger.info("Uploaded log file: %s (%d bytes)", safe_name, dest.stat().st_size)
 
+    try:
+        # Reverse of btoa(encodeURIComponent(text)) on the frontend
+        raw = base64.b64decode(content_encoded + '==').decode('utf-8', errors='replace')
+        decoded = unquote(raw)
+        dest.write_text(decoded, encoding='utf-8')
+    except Exception as e:
+        logger.warning("Could not decode upload: %s", e)
+        return jsonify({"error": f"Failed to decode file: {e}"}), 400
+
+    logger.info("Uploaded log file: %s (%d bytes)", safe_name, dest.stat().st_size)
     return jsonify({"message": "File uploaded", "filename": safe_name}), 201
 
 
