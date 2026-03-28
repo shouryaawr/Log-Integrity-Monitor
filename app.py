@@ -181,9 +181,8 @@ def analyze():
     return jsonify(result)
 
 
-@app.route("/api/results", methods=["GET"])
+@app.route("/api/results/list", methods=["GET"])
 def list_results():
-    """Return a list of saved analysis result JSON files."""
     files = []
     for f in sorted(RESULTS_DIR.iterdir(), reverse=True):
         if f.is_file() and f.suffix == ".json":
@@ -196,15 +195,22 @@ def list_results():
     return jsonify({"results": files})
 
 
-@app.route("/api/results/<filename>", methods=["GET"])
-def get_result(filename: str):
-    """Retrieve a previously saved analysis result."""
+@app.route("/api/results", methods=["GET"])
+def get_result():
+    filename = request.args.get("filename")
+    if not filename:
+        return jsonify({"error": "filename is required"}), 400
     target = RESULTS_DIR / Path(filename).name
     if not target.exists():
         return jsonify({"error": "Result not found"}), 404
-    with open(target, "r", encoding="utf-8") as jf:
-        data = json.load(jf)
-    return jsonify(data)
+    try:
+        with open(target, "r", encoding="utf-8", errors="replace") as jf:
+            data = json.load(jf)
+        return jsonify(data)
+    except json.JSONDecodeError as exc:
+        return jsonify({"error": f"Corrupt result file: {exc}"}), 500
+    except OSError as exc:
+        return jsonify({"error": f"Could not read file: {exc}"}), 500
 
 
 # ============================================================================
