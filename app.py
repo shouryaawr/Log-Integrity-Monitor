@@ -64,7 +64,7 @@ def list_logs():
 
 
 @app.route("/api/logs/upload", methods=["POST"])
-@app.route("/api/logs/upload", methods=["POST"])
+
 def upload_log():
     from urllib.parse import unquote
     import base64
@@ -195,9 +195,10 @@ def list_results():
     return jsonify({"results": files})
 
 
-@app.route("/api/results", methods=["GET"])
+@app.route("/api/results", methods=["POST"])
 def get_result():
-    filename = request.args.get("filename")
+    data = request.get_json(silent=True) or {}
+    filename = data.get("filename")
     if not filename:
         return jsonify({"error": "filename is required"}), 400
     target = RESULTS_DIR / Path(filename).name
