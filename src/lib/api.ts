@@ -153,3 +153,13 @@ export function severityColor(severity: string): string {
     default: return 'rgba(255,255,255,0.4)'
   }
 }
+
+export async function downloadResult(filename: string): Promise<Blob> {
+  const res = await fetch(`${BASE}/results`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename }),
+  })
+  if (!res.ok) throw new Error('Download failed')
+  return res.blob()
+}
