@@ -608,12 +608,21 @@ export default function Home() {
                   {result._meta && (
                     <div className="glass-card p-4">
                       <p className="text-xs font-mono mb-2" style={{ color: 'rgba(255,255,255,0.4)' }}>RESULT SAVED</p>
-                      <div className="flex items-start gap-2">
-                        <IconFile />
-                        <p className="text-xs font-mono break-all" style={{ color: 'rgba(116,192,252,0.7)' }}>
-                          {result._meta.result_file}
-                        </p>
-                      </div>
+                      <div className="flex items-start gap-2 cursor-pointer" onClick={async () => {
+  const res = await fetch(`/api/results/${encodeURIComponent(result._meta!.result_file)}`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = result._meta!.result_file
+  a.click()
+  URL.revokeObjectURL(url)
+}}>
+  <IconFile />
+  <p className="text-xs font-mono break-all" style={{ color: 'rgba(116,192,252,0.7)', textDecoration: 'underline' }}>
+    {result._meta.result_file}
+  </p>
+</div>
                       <p className="text-xs font-mono mt-2" style={{ color: 'rgba(255,255,255,0.25)' }}>
                         Stored in backend/results/
                       </p>
