@@ -65,7 +65,10 @@ export async function fetchLogs(): Promise<LogFile[]> {
 
 export async function uploadLog(file: File): Promise<void> {
   const form = new FormData()
-  form.append('file', file)
+  const cleanedContent = await file.text().then(text =>
+    new Blob([text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')], { type: 'text/plain' })
+  )
+  form.append('file', cleanedContent, file.name)
   try {
     const res = await fetch(`${BASE}/logs/upload`, { method: 'POST', body: form })
     if (!res.ok) {
