@@ -64,31 +64,26 @@ def list_logs():
 
 
 @app.route("/api/logs/upload", methods=["POST"])
-
 def upload_log():
-    from urllib.parse import unquote
-    import base64
+    """Upload a log file and save it to LOGS_DIR."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file part in request"}), 400
 
-    data = request.get_json(silent=True) or {}
-    filename = data.get("filename")
-    content_encoded = data.get("content")
+    f = request.files["file"]
+    if f.filename == "":
+        return jsonify({"error": "Empty filename"}), 400
 
-    if not filename or not content_encoded:
-        return jsonify({"error": "filename and content are required"}), 400
-
-    safe_name = Path(filename).name
+    safe_name = Path(f.filename).name  # strip any directory traversal
     dest = LOGS_DIR / safe_name
-
+    f.save(str(dest))
+    # Re-read and re-write with explicit UTF-8 encoding to sanitize any encoding issues
     try:
-        # Reverse of btoa(encodeURIComponent(text)) on the frontend
-        raw = base64.b64decode(content_encoded + '==').decode('utf-8', errors='replace')
-        decoded = unquote(raw)
-        dest.write_text(decoded, encoding='utf-8')
+        content = dest.read_bytes()
+        dest.write_text(content.decode('utf-8', errors='replace'), encoding='utf-8')
     except Exception as e:
-        logger.warning("Could not decode upload: %s", e)
-        return jsonify({"error": f"Failed to decode file: {e}"}), 400
-
+        logger.warning("Could not sanitize file encoding: %s", e)
     logger.info("Uploaded log file: %s (%d bytes)", safe_name, dest.stat().st_size)
+
     return jsonify({"message": "File uploaded", "filename": safe_name}), 201
 
 
@@ -183,6 +178,7 @@ def analyze():
 
 @app.route("/api/results", methods=["GET"])
 def list_results():
+    """Return a list of saved analysis result JSON files."""
     files = []
     for f in sorted(RESULTS_DIR.iterdir(), reverse=True):
         if f.is_file() and f.suffix == ".json":
@@ -195,9 +191,9 @@ def list_results():
     return jsonify({"results": files})
 
 
-@app.route("/api/results", methods=["POST"])
 @app.route("/api/results/<filename>", methods=["GET"])
 def get_result(filename: str):
+    """Retrieve a previously saved analysis result."""
     target = RESULTS_DIR / Path(filename).name
     if not target.exists():
         return jsonify({"error": "Result not found"}), 404
