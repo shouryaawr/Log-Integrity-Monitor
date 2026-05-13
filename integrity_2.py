@@ -96,10 +96,10 @@ MAX_JUMP_PENALTY     = 20   # Penalty for backward time-jump events
 MAX_SEVERITY_PENALTY = 15   # Penalty for HIGH / MEDIUM severity distribution
 
 # ── Forensic risk-level score thresholds (inclusive lower bounds) ───────────
-LOW_RISK_SCORE_THRESHOLD      = 80  # score ≥ 80 → LOW risk
-MODERATE_RISK_SCORE_THRESHOLD = 60  # score ≥ 60 → MODERATE risk
-HIGH_RISK_SCORE_THRESHOLD     = 40  # score ≥ 40 → HIGH risk
-                                    # score < 40 → CRITICAL risk
+LOW_RISK_SCORE_THRESHOLD      = 90  # score ≥ 90 → LOW risk
+MODERATE_RISK_SCORE_THRESHOLD = 70  # score ≥ 70 → MODERATE risk
+HIGH_RISK_SCORE_THRESHOLD     = 50  # score ≥ 50 → HIGH risk
+                                    # score < 50 → CRITICAL risk
 
 # ── HIGH-severity gap weight inside severity penalty ───────────────────────
 SEVERITY_HIGH_WEIGHT   = 3  # Points per HIGH gap
@@ -571,16 +571,29 @@ class ForensicScorer:
         # Gap density penalty (0–MAX_GAP_PENALTY pts)
         gap_density = (gap_count / parseable) * GAP_DENSITY_SCALE
         gap_penalty = min(MAX_GAP_PENALTY, (gap_density / 10) * MAX_GAP_PENALTY)
-        factors["gap_density"] = {"value": gap_density, "penalty": gap_penalty}
+        factors["gap_density"] = {
+            "penalty": round(gap_penalty, 2),
+            "reason":  f"{gap_density:.2f} gaps per {GAP_DENSITY_SCALE} parseable lines",
+        }
 
         # Malformed-line ratio penalty (0–MAX_MALFORM_PENALTY pts)
-        malformed_ratio  = (malformed / total_lines) * 100
-        malform_penalty  = min(MAX_MALFORM_PENALTY, (malformed_ratio / 10) * MAX_MALFORM_PENALTY)
-        factors["malformed_ratio"] = {"value": malformed_ratio, "penalty": malform_penalty}
+        malformed_ratio = (malformed / total_lines) * 100
+        malform_penalty = min(MAX_MALFORM_PENALTY, (malformed_ratio / 10) * MAX_MALFORM_PENALTY)
+        factors["malformed_ratio"] = {
+            "penalty": round(malform_penalty, 2),
+            "reason":  f"{malformed_ratio:.2f}% of lines could not be parsed",
+        }
 
         # Backward time-jump penalty (0–MAX_JUMP_PENALTY pts)
         jump_penalty = min(MAX_JUMP_PENALTY, backward_jumps * 2)
-        factors["backward_jumps"] = {"value": backward_jumps, "penalty": jump_penalty}
+        factors["backward_jumps"] = {
+            "penalty": round(jump_penalty, 2),
+            "reason":  (
+                f"{backward_jumps} backward timestamp jump(s) detected"
+                if backward_jumps > 0
+                else "No backward jumps detected"
+            ),
+        }
 
         # Severity distribution penalty (0–MAX_SEVERITY_PENALTY pts) — pre-tallied
         high_count   = severity_counts["high"]
@@ -589,10 +602,9 @@ class ForensicScorer:
             MAX_SEVERITY_PENALTY,
             (high_count * SEVERITY_HIGH_WEIGHT) + (medium_count * SEVERITY_MEDIUM_WEIGHT),
         )
-        factors["severity_distribution"] = {
-            "high":    high_count,
-            "medium":  medium_count,
-            "penalty": severity_penalty,
+        factors["high_severity_gaps"] = {
+            "penalty": round(severity_penalty, 2),
+            "reason":  f"{high_count} HIGH and {medium_count} MEDIUM severity gap(s)",
         }
 
         total_penalty = gap_penalty + malform_penalty + jump_penalty + severity_penalty
