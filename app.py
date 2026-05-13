@@ -21,7 +21,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s — %(mes
 logger = logging.getLogger("api")
 
 app = Flask(__name__)
-CORS(app)  # Allow Next.js dev server (localhost:3000) to call this API
+CORS(app, origins=["http://localhost:3000", "http://127.0.0.1:3000"])
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB upload cap
 
 # ── Directories ─────────────────────────────────────────────────────────────
 BASE_DIR  = Path(__file__).parent
@@ -37,6 +38,27 @@ def _serialize(obj):
     if isinstance(obj, datetime):
         return obj.isoformat()
     raise TypeError(f"Not serialisable: {type(obj)}")
+
+
+def _safe_filename(filename: str) -> str:
+    """Return a sanitized filename, raising ValueError on dangerous input.
+
+    Rejects:
+      • Empty names
+      • Names containing null bytes
+      • Names containing path separators (/ or \\)
+      • Names that resolve to a parent-directory traversal (..)
+    """
+    if not filename:
+        raise ValueError("Filename must not be empty.")
+    if "\x00" in filename:
+        raise ValueError("Filename contains null bytes.")
+    if "/" in filename or "\\" in filename:
+        raise ValueError("Filename must not contain path separators.")
+    safe = Path(filename).name
+    if safe in ("", ".", ".."):
+        raise ValueError(f"Filename {filename!r} is not a valid file name.")
+    return safe
 
 
 # ============================================================================
@@ -64,42 +86,51 @@ def list_logs():
 
 
 @app.route("/api/logs/upload", methods=["POST"])
-@app.route("/api/logs/upload", methods=["POST"])
 def upload_log():
     from urllib.parse import unquote
     import base64
 
     data = request.get_json(silent=True) or {}
-    filename = data.get("filename")
+    filename        = data.get("filename")
     content_encoded = data.get("content")
 
     if not filename or not content_encoded:
         return jsonify({"error": "filename and content are required"}), 400
 
-    safe_name = Path(filename).name
+    try:
+        safe_name = _safe_filename(filename)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     dest = LOGS_DIR / safe_name
 
     try:
-        # Reverse of btoa(encodeURIComponent(text)) on the frontend
-        raw = base64.b64decode(content_encoded + '==').decode('utf-8', errors='replace')
-        decoded = unquote(raw)
-        dest.write_text(decoded, encoding='utf-8')
-    except Exception as e:
-        logger.warning("Could not decode upload: %s", e)
-        return jsonify({"error": f"Failed to decode file: {e}"}), 400
+        # Invert the frontend's btoa(encodeURIComponent(text)):
+        #   Step 1 — percent-decode the base64 string  (unquote)
+        #   Step 2 — base64-decode to get the raw UTF-8 bytes
+        percent_decoded = unquote(content_encoded)
+        decoded = base64.b64decode(percent_decoded + "==").decode("utf-8", errors="replace")
+        dest.write_text(decoded, encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Could not decode upload: %s", exc)
+        return jsonify({"error": f"Failed to decode file: {exc}"}), 400
 
     logger.info("Uploaded log file: %s (%d bytes)", safe_name, dest.stat().st_size)
-    return jsonify({"message": "File uploaded", "filename": safe_name}), 201
+    return jsonify({"message": "Uploaded successfully", "filename": safe_name})
 
 
 @app.route("/api/logs/<filename>", methods=["DELETE"])
 def delete_log(filename: str):
     """Delete a log file from LOGS_DIR."""
-    target = LOGS_DIR / Path(filename).name
+    try:
+        safe_name = _safe_filename(filename)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    target = LOGS_DIR / safe_name
     if not target.exists():
         return jsonify({"error": "File not found"}), 404
     target.unlink()
-    return jsonify({"message": f"Deleted {filename}"})
+    return jsonify({"message": f"Deleted {safe_name}"})
 
 
 @app.route("/api/analyze", methods=["POST"])
