@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s — %(mes
 logger = logging.getLogger("api")
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=["http://localhost:3000", "http://127.0.0.1:3000"])
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB upload cap
 
 # ── Directories ─────────────────────────────────────────────────────────────
@@ -106,10 +106,10 @@ def upload_log():
 
     try:
         # Invert the frontend's btoa(encodeURIComponent(text)):
-        #   Step 1 — percent-decode the base64 string  (unquote)
-        #   Step 2 — base64-decode to get the raw UTF-8 bytes
-        percent_decoded = unquote(content_encoded)
-        decoded = base64.b64decode(percent_decoded + "==").decode("utf-8", errors="replace")
+        #   Step 1 — base64-decode the payload back to the percent-encoded string
+        #   Step 2 — percent-decode (unquote) to recover the original UTF-8 text
+        b64_decoded = base64.b64decode(content_encoded + "==").decode("utf-8", errors="replace")
+        decoded = unquote(b64_decoded)
         dest.write_text(decoded, encoding="utf-8")
     except Exception as exc:
         logger.warning("Could not decode upload: %s", exc)
