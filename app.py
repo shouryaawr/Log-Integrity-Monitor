@@ -21,11 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s — %(mes
 logger = logging.getLogger("api")
 
 app = Flask(__name__)
-CORS(app, origins=[
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    os.environ.get("FRONTEND_URL", ""),
-])
+CORS(app)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB upload cap
 
 # ── Directories ─────────────────────────────────────────────────────────────
