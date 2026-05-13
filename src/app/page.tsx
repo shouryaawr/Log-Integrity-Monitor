@@ -51,6 +51,47 @@ function Spinner() {
   )
 }
 
+// ── Analysis loading skeleton ─────────────────────────────────────────────────
+function AnalysisSkeleton() {
+  return (
+    <div className="flex flex-col gap-5 animate-fade-slide" aria-busy="true" aria-label="Analysis in progress">
+      {/* Metric cards skeleton */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="glass-card p-4 flex flex-col gap-2">
+            <div className="skeleton h-3 w-20 rounded" />
+            <div className="skeleton h-7 w-16 rounded" />
+            <div className="skeleton h-2 w-24 rounded" />
+          </div>
+        ))}
+      </div>
+      {/* Main panel skeleton */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-5">
+        <div className="glass-card p-5 flex flex-col gap-4">
+          <div className="flex gap-1 p-1 rounded-xl" style={{ background: 'rgba(0,0,0,0.2)' }}>
+            {[...Array(3)].map((_, i) => <div key={i} className="skeleton flex-1 h-7 rounded-lg" />)}
+          </div>
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="skeleton h-16 w-full rounded-xl" />
+          ))}
+        </div>
+        <div className="flex flex-col gap-4">
+          <div className="glass-card p-5 flex flex-col items-center gap-4">
+            <div className="skeleton h-4 w-28 rounded" />
+            <div className="skeleton rounded-full" style={{ width: 160, height: 160 }} />
+            <div className="skeleton h-6 w-24 rounded-full" />
+          </div>
+          <div className="glass-card p-4 flex flex-col gap-2">
+            <div className="skeleton h-3 w-20 rounded" />
+            <div className="skeleton h-8 w-12 rounded" />
+            <div className="skeleton h-2 w-full rounded-full mt-1" />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ════════════════════════════════════════════════════════════════════════════════
 export default function Home() {
   const [logs, setLogs]               = useState<LogFile[]>([])
@@ -79,8 +120,8 @@ export default function Home() {
     try {
       const list = await fetchLogs()
       setLogs(list)
-    } catch (e: any) {
-      setError(e.message)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to load logs')
     } finally {
       setLogsLoading(false)
     }
@@ -98,8 +139,8 @@ export default function Home() {
         await uploadLog(file)
       }
       await loadLogs()
-    } catch (e: any) {
-      setError(e.message)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Upload failed')
     } finally {
       setUploading(false)
     }
@@ -117,7 +158,7 @@ export default function Home() {
       await deleteLog(name)
       if (selectedFile === name) { setSelectedFile(null); setResult(null) }
       await loadLogs()
-    } catch (e: any) { setError(e.message) }
+    } catch (err: unknown) { setError(err instanceof Error ? err.message : 'Delete failed') }
   }
 
   // ── Analyze ─────────────────────────────────────────────────────────────────
@@ -137,11 +178,11 @@ export default function Home() {
       const res = await analyzeLog(params)
       setResult(res)
       setActiveTab('gaps')
-    } catch (e: any) { setError(e.message) }
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Analysis failed') }
     finally { setAnalyzing(false) }
   }
 
-  const riskLevel = result?.forensic_score.risk_level || ''
+  // riskLevel derived inline where needed; removed unused top-level variable
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
@@ -388,32 +429,8 @@ export default function Home() {
             </div>
           )}
 
-          {/* Loading state */}
-          {analyzing && (
-            <div className="glass-card flex-1 flex flex-col items-center justify-center py-24 gap-6" style={{ minHeight: 400 }}>
-              <div className="relative">
-                {/* Outer ring pulse */}
-                <div
-                  className="absolute inset-0 rounded-full animate-ping"
-                  style={{ background: 'rgba(116,192,252,0.08)', animationDuration: '1.5s' }}
-                />
-                <div
-                  className="p-6 rounded-2xl relative"
-                  style={{ background: 'rgba(116,192,252,0.08)', border: '1px solid rgba(116,192,252,0.2)' }}
-                >
-                  <IconActivity />
-                </div>
-              </div>
-              <div className="text-center">
-                <p className="font-display font-semibold" style={{ color: 'rgba(255,255,255,0.7)', fontFamily: "'Syne', sans-serif" }}>
-                  Streaming analysis in progress…
-                </p>
-                <p className="text-xs font-mono mt-1" style={{ color: 'rgba(255,255,255,0.3)' }}>
-                  Detecting temporal anomalies
-                </p>
-              </div>
-            </div>
-          )}
+          {/* Loading skeleton */}
+          {analyzing && <AnalysisSkeleton />}
 
           {/* Results */}
           {result && !analyzing && (
