@@ -1,26 +1,34 @@
 'use client'
+import { useId } from 'react'
 import { riskColor } from '@/lib/api'
 
 interface Props {
-  score: number
+  score:     number
   riskLevel: string
-  size?: number
+  size?:     number
 }
 
 export function ForensicScoreRing({ score, riskLevel, size = 160 }: Props) {
-  const radius = (size - 20) / 2
+  // Unique filter ID per component instance — avoids shared-filter rendering bugs
+  const filterId = useId().replace(/:/g, '')
+  const radius       = (size - 20) / 2
   const circumference = 2 * Math.PI * radius
-  const filled = (score / 100) * circumference
-  const dashoffset = circumference - filled
-  const color = riskColor(riskLevel)
+  const dashoffset   = circumference - (score / 100) * circumference
+  const color        = riskColor(riskLevel)
 
   return (
     <div className="flex flex-col items-center gap-3">
-      <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
-        {/* Glow filter */}
+      <svg
+        width={size}
+        height={size}
+        role="img"
+        aria-label={`Forensic score ${score} — ${riskLevel} risk`}
+        style={{ transform: 'rotate(-90deg)', overflow: 'visible' }}
+      >
         <defs>
-          <filter id="glow">
-            <feGaussianBlur stdDeviation="3" result="coloredBlur" />
+          {/* Contained glow — stdDeviation kept low to avoid GPU thrash */}
+          <filter id={filterId} x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="2.5" result="coloredBlur" />
             <feMerge>
               <feMergeNode in="coloredBlur" />
               <feMergeNode in="SourceGraphic" />
@@ -45,11 +53,11 @@ export function ForensicScoreRing({ score, riskLevel, size = 160 }: Props) {
           strokeLinecap="round"
           strokeDasharray={circumference}
           strokeDashoffset={dashoffset}
-          filter="url(#glow)"
+          filter={`url(#${filterId})`}
           style={{ transition: 'stroke-dashoffset 1.2s cubic-bezier(0.4,0,0.2,1)' }}
         />
 
-        {/* Score text — counter-rotated */}
+        {/* Counter-rotated score label */}
         <text
           x={size / 2} y={size / 2 + 2}
           textAnchor="middle"
@@ -64,17 +72,15 @@ export function ForensicScoreRing({ score, riskLevel, size = 160 }: Props) {
         </text>
       </svg>
 
-      <div className="text-center">
-        <div
-          className="text-xs font-mono px-3 py-1 rounded-full"
-          style={{
-            background: `${color}18`,
-            border: `1px solid ${color}40`,
-            color,
-          }}
-        >
-          {riskLevel} RISK
-        </div>
+      <div
+        className="text-xs font-mono px-3 py-1 rounded-full"
+        style={{
+          background: `color-mix(in srgb, ${color} 12%, transparent)`,
+          border: `1px solid color-mix(in srgb, ${color} 35%, transparent)`,
+          color,
+        }}
+      >
+        {riskLevel} RISK
       </div>
     </div>
   )
