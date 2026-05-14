@@ -577,60 +577,95 @@ export default function Home() {
 
                   {/* Stats tab */}
                   {activeTab === 'stats' && (
-                    <div className="flex flex-col gap-3">
-                      <h3 className="text-sm font-display font-semibold mb-1" style={{ fontFamily: "'Syne', sans-serif", color: 'rgba(255,255,255,0.7)' }}>
+                    <div className="flex flex-col gap-4">
+                      <h3 className="text-sm font-display font-semibold" style={{ fontFamily: "'Syne', sans-serif", color: 'rgba(255,255,255,0.7)' }}>
                         Processing Statistics
                       </h3>
-                      {[
-                        ['Total Lines',      result.stats.total_lines.toLocaleString()],
-                        ['Parseable Lines',  result.stats.parseable_lines.toLocaleString()],
-                        ['Malformed Lines',  result.stats.malformed_lines.toLocaleString()],
-                        ['TZ Conversions',   result.stats.tz_conversions.toLocaleString()],
-                        ['Backward Jumps',   result.stats.backward_jumps.toLocaleString()],
-                        ['Gap Count',        result.stats.gap_count.toLocaleString()],
-                        ['Assumed TZ',       result.summary.assumed_tz || 'UTC (naive)'],
-                        ['Threshold Used',   `${result.summary.threshold_seconds}s`],
-                        ['High Threshold',   `${result.summary.high_threshold_seconds}s`],
-                        ['Med Threshold',    `${result.summary.medium_threshold_seconds}s`],
-                        ['Hash Algorithm',   result.stats.hash_algorithm ?? 'sha256'],
-                        ['Log Start',        formatUtcTimestamp(result.stats.log_start_utc)],
-                        ['Log End',          formatUtcTimestamp(result.stats.log_end_utc)],
-                        ['Log Duration',     result.stats.log_duration_seconds != null ? formatDuration(result.stats.log_duration_seconds) : '—'],
-                        ['Line Rate',        result.stats.line_rate_per_second != null ? `${result.stats.line_rate_per_second.toFixed(2)}/s` : '—'],
-                        ['Exec Time',        `${result.performance.execution_time_ms.toFixed(3)} ms`],
-                      ].map(([label, value]) => (
-                        <div key={label} className="flex justify-between items-center glass-card-inset px-3 py-2">
-                          <span className="text-xs font-mono" style={{ color: 'rgba(255,255,255,0.4)' }}>{label}</span>
-                          <span className="text-xs font-mono" style={{ color: 'rgba(255,255,255,0.8)' }}>{value}</span>
+
+                      {/* Primary metrics grid */}
+                      <div className="grid grid-cols-2 gap-2">
+                        {([
+                          ['TOTAL LINES',    result.stats.total_lines.toLocaleString()],
+                          ['PARSEABLE',      result.stats.parseable_lines.toLocaleString()],
+                          ['MALFORMED',      result.stats.malformed_lines.toLocaleString()],
+                          ['TZ CONVERSIONS', result.stats.tz_conversions.toLocaleString()],
+                          ['BACKWARD JUMPS', result.stats.backward_jumps.toLocaleString()],
+                          ['GAP COUNT',      result.stats.gap_count.toLocaleString()],
+                        ] as [string, string][]).map(([label, value]) => (
+                          <div key={label} className="glass-card-inset px-3 py-3 flex flex-col gap-1"
+                            style={{ backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}
+                          >
+                            <span className="text-xs font-mono" style={{ color: 'rgba(255,255,255,0.35)' }}>{label}</span>
+                            <span className="text-sm font-semibold font-mono" style={{ color: 'var(--text-primary)' }}>{value}</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Analysis config grid */}
+                      <div className="grid grid-cols-2 gap-2">
+                        {([
+                          ['ASSUMED TZ',    result.summary.assumed_tz || 'UTC (naive)'],
+                          ['HASH ALGO',     result.stats.hash_algorithm ?? 'sha256'],
+                          ['THRESHOLD',     `${result.summary.threshold_seconds}s`],
+                          ['HIGH ≥',        `${result.summary.high_threshold_seconds}s`],
+                          ['MEDIUM ≥',      `${result.summary.medium_threshold_seconds}s`],
+                          ['LINE RATE',     result.stats.line_rate_per_second != null ? `${result.stats.line_rate_per_second.toFixed(2)}/s` : '—'],
+                        ] as [string, string][]).map(([label, value]) => (
+                          <div key={label} className="glass-card-inset px-3 py-3 flex flex-col gap-1"
+                            style={{ backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}
+                          >
+                            <span className="text-xs font-mono" style={{ color: 'rgba(255,255,255,0.35)' }}>{label}</span>
+                            <span className="text-sm font-semibold font-mono" style={{ color: 'var(--text-primary)' }}>{value}</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Temporal span — full-width rows */}
+                      {([
+                        ['LOG START',    formatUtcTimestamp(result.stats.log_start_utc)],
+                        ['LOG END',      formatUtcTimestamp(result.stats.log_end_utc)],
+                        ['LOG DURATION', result.stats.log_duration_seconds != null ? formatDuration(result.stats.log_duration_seconds) : '—'],
+                      ] as [string, string][]).map(([label, value]) => (
+                        <div key={label} className="glass-card-inset px-3 py-2 flex justify-between items-center"
+                          style={{ backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}
+                        >
+                          <span className="text-xs font-mono" style={{ color: 'rgba(255,255,255,0.35)' }}>{label}</span>
+                          <span className="text-xs font-semibold font-mono" style={{ color: 'var(--text-secondary)' }}>{value}</span>
                         </div>
                       ))}
-                      <div className="glass-card-inset px-3 py-2">
-                        <p className="text-xs font-mono mb-1" style={{ color: 'rgba(255,255,255,0.4)' }}>CHAIN HASH</p>
-                        <p className="text-xs font-mono break-all" style={{ color: 'rgba(116,192,252,0.7)' }}>
+
+                      {/* Chain hash — full-width */}
+                      <div className="glass-card-inset px-3 py-3"
+                        style={{ backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}
+                      >
+                        <p className="text-xs font-mono mb-1.5" style={{ color: 'rgba(255,255,255,0.35)' }}>CHAIN HASH</p>
+                        <p className="text-xs font-mono break-all font-semibold" style={{ color: 'var(--accent)', opacity: 0.8 }}>
                           {result.stats.chain_hash}
                         </p>
                       </div>
 
                       {/* Forensic factors breakdown */}
                       {result.forensic_score.factors && typeof result.forensic_score.factors === 'object' && (
-                        <div className="mt-2">
-                          <p className="text-xs font-mono mb-2" style={{ color: 'rgba(255,255,255,0.4)' }}>FORENSIC PENALTY FACTORS</p>
+                        <div>
+                          <p className="text-xs font-mono mb-2" style={{ color: 'rgba(255,255,255,0.35)' }}>FORENSIC PENALTY FACTORS</p>
                           <div className="flex flex-col gap-2">
                             {Object.entries(result.forensic_score.factors).map(([key, val]: [string, any]) => {
                               if (typeof val !== 'object' || val === null) return null
                               const penalty = val.penalty ?? 0
                               return (
-                                <div key={key} className="glass-card-inset px-3 py-2">
-                                  <div className="flex justify-between mb-1">
+                                <div key={key} className="glass-card-inset px-3 py-2"
+                                  style={{ backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}
+                                >
+                                  <div className="flex justify-between mb-1.5">
                                     <span className="text-xs font-mono capitalize" style={{ color: 'rgba(255,255,255,0.5)' }}>
                                       {key.replace(/_/g, ' ')}
                                     </span>
-                                    <span className="text-xs font-mono" style={{ color: '#ffa94d' }}>-{penalty.toFixed(1)} pts</span>
+                                    <span className="text-xs font-mono font-semibold" style={{ color: 'var(--color-medium)' }}>-{penalty.toFixed(1)} pts</span>
                                   </div>
                                   <div className="h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.07)' }}>
                                     <div
                                       className="h-1 rounded-full transition-all duration-700"
-                                      style={{ width: `${Math.min(100, (penalty / 40) * 100)}%`, background: '#ffa94d' }}
+                                      style={{ width: `${Math.min(100, (penalty / 40) * 100)}%`, background: 'var(--color-medium)' }}
                                     />
                                   </div>
                                 </div>
@@ -680,7 +715,12 @@ export default function Home() {
 
                 {/* Right: forensic score + result meta */}
                 <div className="flex flex-col gap-4">
-                  <div className="glass-card p-5 flex flex-col items-center gap-4">
+                  <div
+                    className="glass-card p-5 flex flex-col items-center gap-4"
+                    style={{
+                      boxShadow: '0 0 32px rgba(var(--accent-rgb), 0.08), 0 0 0 1px rgba(var(--accent-rgb), 0.12)',
+                    }}
+                  >
                     <h3 className="text-sm font-display font-semibold self-start" style={{ fontFamily: "'Syne', sans-serif", color: 'rgba(255,255,255,0.7)' }}>
                       Forensic Score
                     </h3>
