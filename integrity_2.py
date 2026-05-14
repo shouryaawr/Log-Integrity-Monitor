@@ -12,17 +12,21 @@ Layered backend-safe architecture:
   • safe to call from Flask, FastAPI, Django, or any other framework
 """
 
+from __future__ import annotations
+
 import re
 import csv
 import sys
 import json
+import math
 import time
+import calendar
 import logging
 import argparse
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from typing import Generator, NamedTuple
+from typing import IO, Any, Generator, NamedTuple, TypedDict
 from pathlib import Path
 import io
 
@@ -76,7 +80,7 @@ class Config:
 DEFAULT_CONFIG = Config()
 
 # ── Log file path — set this to run without a CLI argument ─────────────────
-LOG_FILE = "HDFS_2k.log.txt"  # Set your log file path here (e.g., "server.log")
+LOG_FILE = ""  # No default — must be provided as a CLI argument
 
 # Convenience aliases kept for backward-compat references inside this module
 THRESHOLD_SECONDS          = DEFAULT_CONFIG.threshold_seconds
@@ -87,6 +91,9 @@ YEAR_CUTOFF                = DEFAULT_CONFIG.year_cutoff
 GAP_DENSITY_SCALE          = DEFAULT_CONFIG.gap_density_scale
 HASH_LENGTH                = DEFAULT_CONFIG.hash_length
 DEFAULT_ASSUMED_TZ: timezone | None = None  # None = treat naive timestamps as UTC
+
+SCHEMA_VERSION = "1.1"
+HASH_ALGORITHM = "sha256"
 
 # ── Forensic scoring penalty caps ──────────────────────────────────────────
 # Maximum points deducted per risk factor (must sum ≤ 100).
@@ -107,6 +114,63 @@ SEVERITY_MEDIUM_WEIGHT = 1  # Points per MEDIUM gap
 
 # UTC reference for all normalisation
 UTC = timezone.utc
+
+
+# ============================================================================
+# TYPE ANNOTATIONS
+# ============================================================================
+class GapDict(TypedDict):
+    gap_number:       int
+    severity:         str
+    start_utc:        str
+    end_utc:          str
+    duration_seconds: float
+    evidence_hash:    str
+
+class StatsDict(TypedDict):
+    total_lines:          int
+    malformed_lines:      int
+    parseable_lines:      int
+    gap_count:            int
+    backward_jumps:       int
+    tz_conversions:       int
+    chain_hash:           str
+    hash_algorithm:       str
+    log_start_utc:        str | None
+    log_end_utc:          str | None
+    log_duration_seconds: float | None
+    line_rate_per_second: float | None
+
+class ForensicFactorDict(TypedDict):
+    penalty: float
+    reason:  str
+
+class ForensicScoreDict(TypedDict):
+    score:      int
+    risk_level: str
+    factors:    dict[str, ForensicFactorDict]
+
+class SummaryDict(TypedDict):
+    total_gaps:                 int
+    high_severity:              int
+    medium_severity:            int
+    low_severity:               int
+    gap_density_per_1000_lines: float
+    assumed_tz:                 str | None
+    summary_only:               bool
+    threshold_seconds:          int
+    high_threshold_seconds:     int
+    medium_threshold_seconds:   int
+    largest_gap_seconds:        float | None
+    average_gap_seconds:        float | None
+
+class AnalysisResult(TypedDict):
+    schema_version: str
+    gaps:           list[GapDict]
+    stats:          StatsDict
+    forensic_score: ForensicScoreDict
+    summary:        SummaryDict
+    performance:    dict[str, float]
 
 
 # ============================================================================
@@ -218,13 +282,6 @@ class TimestampParser:
         r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})"
         r"\s*([+-]\d{2}:?\d{2}|Z)"
     )
-    # FIX: The original pattern used [+-Z] which is an ASCII range from '+' (43)
-    # to 'Z' (90), accidentally including all uppercase letters A–Z and digits.
-    # The negative lookahead (?!\s*[+-Z]) therefore fired even when the timestamp
-    # was followed by a log level like "INFO" or "WARN", causing every ISO naive
-    # timestamp to silently fail to parse.
-    # Correct form uses a non-capturing alternation: (?:[+-]|Z) which matches
-    # only the literal '+', '-', or 'Z' characters.
     PATTERN_ISO_NAIVE    = re.compile(
         r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?!\s*(?:[+-]|Z))"
     )
@@ -233,10 +290,18 @@ class TimestampParser:
         r"(\d{2})/([A-Za-z]{3})/(\d{4}):(\d{2}):(\d{2}):(\d{2})"
         r"\s+([+-]\d{4})"
     )
+    # Windows Event Log 12-hour AM/PM — more specific than slash-naive, tried first.
+    PATTERN_SLASH_AMPM = re.compile(
+        r"(\d{1,2})/(\d{1,2})/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s+(AM|PM)",
+        re.IGNORECASE,
+    )
     # US-style slash naive: 03/15/2024 14:22:01
-    # use_match=True — timestamp always at line start.
     PATTERN_SLASH_NAIVE  = re.compile(
         r"(\d{2})/(\d{2})/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?!\s*(?:[+-]|Z))"
+    )
+    # RFC 3164 syslog: Jan  2 15:04:05
+    PATTERN_SYSLOG = re.compile(
+        r"([A-Za-z]{3})\s{1,2}(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})"
     )
 
     _MONTH_MAP: dict[str, int] = {
@@ -255,7 +320,9 @@ class TimestampParser:
             (self.PATTERN_APACHE,       self._parse_apache,       False),
             (self.PATTERN_YYMMDDHHMMSS, self._parse_yymmddhhmmss, True),
             (self.PATTERN_ISO_NAIVE,    self._parse_iso_naive,    True),
+            (self.PATTERN_SLASH_AMPM,   self._parse_slash_ampm,   True),
             (self.PATTERN_SLASH_NAIVE,  self._parse_slash_naive,  True),
+            (self.PATTERN_SYSLOG,       self._parse_syslog,       False),
         ]
 
         # ── Fast-dispatch lookup tables (PERF-OPT A) ───────────────────────
@@ -269,9 +336,14 @@ class TimestampParser:
         self._compact_patterns = [
             (self.PATTERN_YYMMDDHHMMSS, self._parse_yymmddhhmmss, True),
         ]
-        # US slash naive: MM/DD/YYYY — digit at [0], '/' at [2]
+        # US slash: MM/DD/YYYY — AM/PM variant tried first (more specific)
         self._slash_patterns = [
+            (self.PATTERN_SLASH_AMPM,  self._parse_slash_ampm,  True),
             (self.PATTERN_SLASH_NAIVE, self._parse_slash_naive, True),
+        ]
+        # RFC 3164 syslog: alpha month prefix
+        self._syslog_patterns = [
+            (self.PATTERN_SYSLOG, self._parse_syslog, False),
         ]
 
     # ── Helpers ────────────────────────────────────────────────────────────
@@ -284,8 +356,11 @@ class TimestampParser:
             raise ValueError(f"Year out of range: {year}")
         if not (1 <= month <= 12):
             raise ValueError(f"Month out of range: {month}")
-        if not (1 <= day <= 31):
-            raise ValueError(f"Day out of range: {day}")
+        max_day = calendar.monthrange(year, month)[1]
+        if not (1 <= day <= max_day):
+            raise ValueError(
+                f"Day {day} out of range for {year}-{month:02d} (max {max_day})"
+            )
         if not (0 <= hour <= 23):
             raise ValueError(f"Hour out of range: {hour}")
         if not (0 <= minute <= 59):
@@ -344,6 +419,41 @@ class TimestampParser:
         TimestampParser._validate(year, month, day, hour, minute, second)
         return datetime(year, month, day, hour, minute, second)
 
+    @staticmethod
+    def _parse_slash_ampm(groups: tuple) -> datetime:
+        """Parse Windows Event Log 12-hour format: ``MM/DD/YYYY HH:MM:SS AM/PM``."""
+        month, day, year     = int(groups[0]), int(groups[1]), int(groups[2])
+        hour, minute, second = int(groups[3]), int(groups[4]), int(groups[5])
+        ampm                 = groups[6].upper()
+        if ampm == "AM":
+            if hour == 12:
+                hour = 0
+        else:
+            if hour != 12:
+                hour += 12
+        TimestampParser._validate(year, month, day, hour, minute, second)
+        return datetime(year, month, day, hour, minute, second)
+
+    @classmethod
+    def _parse_syslog(cls, groups: tuple) -> datetime:
+        """Parse RFC 3164 syslog: ``Mon DD HH:MM:SS`` (naive — no year, no timezone).
+
+        Year is inferred from the current system year. Handles December→January rollover:
+        if the log month is December but the current month is January, uses previous year.
+        """
+        mon_str = groups[0]
+        day     = int(groups[1])
+        hour    = int(groups[2])
+        minute  = int(groups[3])
+        second  = int(groups[4])
+        month   = cls._month_abbr(mon_str)
+        now     = datetime.now()
+        year    = now.year
+        if month == 12 and now.month == 1:
+            year -= 1
+        TimestampParser._validate(year, month, day, hour, minute, second)
+        return datetime(year, month, day, hour, minute, second)
+
     # ── Public API ─────────────────────────────────────────────────────────
     def parse(self, line: str) -> datetime | None:
         """Parse the first recognisable timestamp in *line*.
@@ -392,10 +502,11 @@ class TimestampParser:
             else:
                 # Digit-leading but unrecognised structure → full scan
                 candidate_patterns = self.patterns
+        elif c0.isalpha() and stripped[3:4] == " " and len(stripped) > 15:
+            # RFC 3164 syslog: Mon DD HH:MM:SS
+            candidate_patterns = self._syslog_patterns
         elif "[" in stripped:
             # Apache/Nginx combined log: IP - - [DD/Mon/YYYY:...]
-            # RFC 2822 weekday prefix also caught by full scan below;
-            # bracket check is a reliable Apache fast-path.
             candidate_patterns = self._apache_patterns
         else:
             # Non-digit, no bracket → RFC 2822 weekday prefix or custom; full scan
@@ -504,8 +615,9 @@ class EvidenceHashChain:
     modification of an earlier gap invalidates every subsequent hash.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, algorithm: str = HASH_ALGORITHM) -> None:
         self.previous_hash = "GENESIS"
+        self.algorithm     = algorithm
 
     def compute_hash(
         self,
@@ -521,7 +633,7 @@ class EvidenceHashChain:
             f"{start.isoformat()}:{end.isoformat()}:"
             f"{duration:.0f}:{self.previous_hash}"
         )
-        new_hash           = hashlib.sha256(raw.encode()).hexdigest()[:HASH_LENGTH]
+        new_hash           = hashlib.new(self.algorithm, raw.encode()).hexdigest()[:HASH_LENGTH]
         self.previous_hash = new_hash
         return new_hash
 
@@ -565,7 +677,12 @@ class ForensicScorer:
             return {
                 "score":      100,
                 "risk_level": "UNKNOWN",
-                "factors":    {"reason": "Insufficient data"},
+                "factors": {
+                    "insufficient_data": {
+                        "penalty": 0.0,
+                        "reason":  "File produced zero parseable lines — no score can be computed.",
+                    }
+                },
             }
 
         factors = {}
@@ -677,6 +794,8 @@ class GapDetectionEngine:
         self.tz_conversions   = 0
         self.previous_dt      = None  # UTC-aware
         self.hash_chain       = EvidenceHashChain()
+        self.first_ts: datetime | None = None
+        self.last_ts:  datetime | None = None
 
     def _normalise(self, dt: datetime) -> datetime:
         """Attach assumed timezone if naive, then convert to UTC.
@@ -750,6 +869,8 @@ class GapDetectionEngine:
         gap_count        = 0
         tz_conversions   = 0
         previous_dt      = None
+        first_ts: datetime | None = None
+        last_ts:  datetime | None = None
 
         for line in log_file:
             total_lines += 1
@@ -780,6 +901,11 @@ class GapDetectionEngine:
                 else:
                     current_dt = raw_dt.astimezone(_UTC)
                     tz_conversions += 1
+
+            # Track temporal span
+            if first_ts is None:
+                first_ts = current_dt
+            last_ts = current_dt
 
             if previous_dt is not None:
                 delta = total_seconds(current_dt - previous_dt)
@@ -832,8 +958,10 @@ class GapDetectionEngine:
         self.gap_count        = gap_count
         self.tz_conversions   = tz_conversions
         self.previous_dt      = previous_dt
+        self.first_ts         = first_ts
+        self.last_ts          = last_ts
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> StatsDict:
         """Return a statistics dict summarising the completed scan."""
         return {
             "total_lines":     self.total_lines,
@@ -843,6 +971,22 @@ class GapDetectionEngine:
             "backward_jumps":  self.backward_jumps,
             "tz_conversions":  self.tz_conversions,
             "chain_hash":      self.hash_chain.get_chain_hash(),
+            "hash_algorithm":  self.hash_chain.algorithm,
+            "log_start_utc":   self.first_ts.isoformat() if self.first_ts else None,
+            "log_end_utc":     self.last_ts.isoformat()  if self.last_ts  else None,
+            "log_duration_seconds": (
+                round((self.last_ts - self.first_ts).total_seconds(), 3)
+                if self.first_ts and self.last_ts else None
+            ),
+            "line_rate_per_second": (
+                round(
+                    self.valid_timestamps /
+                    (self.last_ts - self.first_ts).total_seconds(),
+                    4,
+                )
+                if self.first_ts and self.last_ts and self.last_ts > self.first_ts
+                else None
+            ),
         }
 
 
@@ -850,14 +994,14 @@ class GapDetectionEngine:
 # SERVICE LAYER
 # ============================================================================
 def analyze_log(
-    file_stream,
+    file_stream:      IO[str],
     threshold:        int             = THRESHOLD_SECONDS,
     high_threshold:   int | None      = None,
     medium_threshold: int | None      = None,
     max_gaps:         int             = MAX_GAPS,
     assumed_tz:       timezone | None = None,
     summary_only:     bool            = False,
-) -> dict:
+) -> AnalysisResult:
     """Run the full log integrity detection pipeline and return structured results.
 
     This is the primary reusable entry point for backend/API integration.
@@ -920,6 +1064,11 @@ def analyze_log(
     if medium_threshold is not None and medium_threshold <= 0:
         raise ValueError("medium_threshold must be a positive integer.")
 
+    logger.debug(
+        "analyze_log started: threshold=%ds max_gaps=%d summary_only=%s",
+        threshold, max_gaps, summary_only,
+    )
+
     # ── Assemble pipeline components ──────────────────────────────────────
     timestamp_parser    = TimestampParser()
     severity_classifier = SeverityClassifier(
@@ -951,6 +1100,8 @@ def analyze_log(
     sc_medium      = 0
     sc_low         = 0
     sc_total       = 0
+    max_gap_seconds:   float = 0.0
+    total_gap_seconds: float = 0.0
 
     for gap in engine.process_stream(file_stream):
         sev = gap.severity  # "HIGH" | "MEDIUM" | "LOW"
@@ -961,6 +1112,11 @@ def analyze_log(
             sc_medium += 1
         else:
             sc_low += 1
+
+        dur = gap.duration
+        total_gap_seconds += dur
+        if dur > max_gap_seconds:
+            max_gap_seconds = dur
 
         if not summary_only:
             # OPT-8: single append_gap() call; no repeated dict-key access.
@@ -995,16 +1151,27 @@ def analyze_log(
     # ── Wall-clock elapsed time ───────────────────────────────────────────
     execution_time_ms = (time.perf_counter() - _t_start) * 1000
 
-    # OPT-11: lazy %s formatting — no string is built if INFO is filtered.
     logger.info(
-        "analyze_log completed: %d lines, %d gaps, %.2f ms",
+        "analyze_log done: lines=%d parseable=%d malformed=%d "
+        "gaps=%d (H=%d M=%d L=%d) risk=%s score=%d elapsed=%.1fms",
         stats["total_lines"],
+        stats["parseable_lines"],
+        stats["malformed_lines"],
         sc_total,
+        sc_high, sc_medium, sc_low,
+        forensic_data["risk_level"],
+        forensic_data["score"],
         execution_time_ms,
     )
+    if forensic_data["risk_level"] == "CRITICAL":
+        logger.warning(
+            "CRITICAL integrity risk: score=%d — review log file for tampering.",
+            forensic_data["score"],
+        )
 
     # ── Return structured result — no print, no side-effects ─────────────
     return {
+        "schema_version": SCHEMA_VERSION,
         "gaps":  gaps_payload,
         "stats": stats,
         "forensic_score": forensic_data,
@@ -1016,6 +1183,15 @@ def analyze_log(
             "gap_density_per_1000_lines": round(gap_density, 4),
             "assumed_tz":                str(assumed_tz) if assumed_tz else None,
             "summary_only":              summary_only,
+            "threshold_seconds":         threshold,
+            "high_threshold_seconds": (
+                high_threshold if high_threshold is not None else HIGH_SEVERITY_THRESHOLD
+            ),
+            "medium_threshold_seconds": (
+                medium_threshold if medium_threshold is not None else MEDIUM_SEVERITY_THRESHOLD
+            ),
+            "largest_gap_seconds": round(max_gap_seconds, 3) if sc_total > 0 else None,
+            "average_gap_seconds": round(total_gap_seconds / sc_total, 3) if sc_total > 0 else None,
         },
         "performance": {
             "execution_time_ms": round(execution_time_ms, 3),
@@ -1043,8 +1219,12 @@ class ReportGenerator:
 
     @staticmethod
     def format_duration(seconds: float) -> str:
-        """Convert a raw second count to a human-readable `Xm Ys string."""
-        minutes, secs = divmod(int(seconds), 60)
+        """Convert a raw second count to a human-readable duration string."""
+        total            = int(seconds)
+        hours, remainder = divmod(total, 3600)
+        minutes, secs    = divmod(remainder, 60)
+        if hours:
+            return f"{hours}h {minutes}m {secs}s"
         return f"{minutes}m {secs}s"
 
     @staticmethod
@@ -1292,11 +1472,7 @@ class InputLayer:
             "logfile",
             nargs="?",
             default=LOG_FILE,
-            help=(
-                "Path to the log file to analyse. "
-                "Can also be set via the LOG_FILE constant at the top of the script. "
-                f"Default: {LOG_FILE!r}."
-            ),
+            help="Path to the log file to analyse.",
         )
         parser.add_argument(
             "--threshold", type=int, default=THRESHOLD_SECONDS, metavar="SECONDS",
