@@ -207,3 +207,13 @@ body::after {
   background: rgba(var(--rgb-high), 0.22);
   box-shadow: 0 0 12px rgba(var(--rgb-high), 0.15);
 }
+
+/* ── Glow utilities ──────────────────────────────────────────────────────── */
+.shadow-glow {
+  box-shadow: 0 0 32px rgba(var(--accent-rgb), 0.08), 0 0 0 1px rgba(var(--accent-rgb), 0.12);
+}
+
+.backdrop-blur-glass {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
