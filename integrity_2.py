@@ -280,6 +280,8 @@ class TimestampParser:
         year: int, month: int, day: int,
         hour: int, minute: int, second: int,
     ) -> None:
+        if not (1 <= year <= 9999):
+            raise ValueError(f"Year out of range: {year}")
         if not (1 <= month <= 12):
             raise ValueError(f"Month out of range: {month}")
         if not (1 <= day <= 31):
@@ -304,8 +306,8 @@ class TimestampParser:
         date_part, time_part = groups[0], groups[1]
         yy    = int(date_part[:2]); mm  = int(date_part[2:4]); dd = int(date_part[4:6])
         hh    = int(time_part[:2]); mm_min = int(time_part[2:4]); ss = int(time_part[4:6])
-        TimestampParser._validate(2000, mm, dd, hh, mm_min, ss)
         year  = 2000 + yy if yy < YEAR_CUTOFF else 1900 + yy
+        TimestampParser._validate(year, mm, dd, hh, mm_min, ss)
         return datetime(year, mm, dd, hh, mm_min, ss)
 
     @staticmethod
@@ -616,8 +618,13 @@ class ForensicScorer:
             risk_level = "MODERATE"
         elif score >= HIGH_RISK_SCORE_THRESHOLD:
             risk_level = "HIGH"
-        else:
+        elif score >= 0:
             risk_level = "CRITICAL"
+        else:
+            # Defensive fallback — score is clamped to 0–100 above, so this
+            # branch should never be reached. Kept to match the frontend
+            # TypeScript union: 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL' | 'UNKNOWN'.
+            risk_level = "UNKNOWN"
 
         return {"score": score, "risk_level": risk_level, "factors": factors}
 
