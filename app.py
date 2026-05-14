@@ -21,11 +21,11 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s — %(mes
 logger = logging.getLogger("api")
 
 app = Flask(__name__)
-CORS(app, origins=[
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    os.environ.get("FRONTEND_URL", ""),
-])
+_cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+if _frontend_url := os.environ.get("FRONTEND_URL"):
+    _cors_origins.append(_frontend_url)
+
+CORS(app, origins=_cors_origins)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB upload cap
 
 # ── Directories ─────────────────────────────────────────────────────────────
@@ -44,6 +44,10 @@ def _serialize(obj):
     raise TypeError(f"Not serialisable: {type(obj)}")
 
 
+ALLOWED_LOG_EXTENSIONS = frozenset({
+    ".log", ".txt", ".csv", ".tsv", ".out", ".gz",
+})
+
 def _safe_filename(filename: str) -> str:
     """Return a sanitized filename, raising ValueError on dangerous input.
 
@@ -52,6 +56,7 @@ def _safe_filename(filename: str) -> str:
       • Names containing null bytes
       • Names containing path separators (/ or \\)
       • Names that resolve to a parent-directory traversal (..)
+      • Names whose extension is not in ALLOWED_LOG_EXTENSIONS
     """
     if not filename:
         raise ValueError("Filename must not be empty.")
@@ -62,6 +67,12 @@ def _safe_filename(filename: str) -> str:
     safe = Path(filename).name
     if safe in ("", ".", ".."):
         raise ValueError(f"Filename {filename!r} is not a valid file name.")
+    ext = Path(safe).suffix.lower()
+    if ext not in ALLOWED_LOG_EXTENSIONS:
+        raise ValueError(
+            f"File extension {ext!r} is not allowed. "
+            f"Permitted extensions: {', '.join(sorted(ALLOWED_LOG_EXTENSIONS))}"
+        )
     return safe
 
 
@@ -166,6 +177,17 @@ def analyze():
         high_threshold = int(high_threshold)
     if medium_threshold is not None:
         medium_threshold = int(medium_threshold)
+
+    # Cross-validate threshold ordering
+    _eff_high   = high_threshold   if high_threshold   is not None else 3600
+    _eff_medium = medium_threshold if medium_threshold is not None else 600
+    if _eff_medium >= _eff_high:
+        return jsonify({
+            "error": (
+                f"medium_threshold ({_eff_medium}s) must be less than "
+                f"high_threshold ({_eff_high}s)."
+            )
+        }), 400
 
     # ── Resolve timezone ─────────────────────────────────────────────────────
     assumed_tz = None
