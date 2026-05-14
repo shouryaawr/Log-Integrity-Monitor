@@ -3,8 +3,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import {
   fetchLogs, uploadLog, deleteLog, analyzeLog,
-  formatBytes, formatDuration,
+  fetchHealth, formatBytes, formatDuration, formatUtcTimestamp,
   type LogFile, type AnalysisResult, type AnalyzeParams,
+  type PaginatedLogsResponse, type HealthResponse,
 } from '@/lib/api'
 import { ForensicScoreRing } from '@/components/ForensicScoreRing'
 import { GapList } from '@/components/GapList'
@@ -94,6 +95,8 @@ function AnalysisSkeleton() {
 export default function Home() {
   const [logs, setLogs]               = useState<LogFile[]>([])
   const [logsLoading, setLogsLoading] = useState(false)
+  const [logsPagination, setLogsPagination] = useState<Omit<PaginatedLogsResponse, 'logs'>>({ total: 0, page: 1, per_page: 50, total_pages: 1 })
+  const [logsPage, setLogsPage]       = useState(1)
   const [uploading, setUploading]     = useState(false)
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [analyzing, setAnalyzing]     = useState(false)
@@ -102,6 +105,7 @@ export default function Home() {
   const [dragOver, setDragOver]       = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [activeTab, setActiveTab]     = useState<'gaps' | 'stats' | 'chart'>('gaps')
+  const [health, setHealth]           = useState<HealthResponse | null>(null)
 
   // Settings
   const [threshold, setThreshold]           = useState('60')
@@ -113,19 +117,30 @@ export default function Home() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const loadLogs = useCallback(async () => {
+  const loadLogs = useCallback(async (page = logsPage) => {
     setLogsLoading(true)
     try {
-      const list = await fetchLogs()
-      setLogs(list)
+      const data = await fetchLogs(page)
+      setLogs(data.logs)
+      setLogsPagination({ total: data.total, page: data.page, per_page: data.per_page, total_pages: data.total_pages })
+      setLogsPage(data.page)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load logs')
     } finally {
       setLogsLoading(false)
     }
+  }, [logsPage])
+
+  const loadHealth = useCallback(async () => {
+    try {
+      const h = await fetchHealth()
+      setHealth(h)
+    } catch {
+      // silent — health is non-critical for core functionality
+    }
   }, [])
 
-  useEffect(() => { loadLogs() }, [loadLogs])
+  useEffect(() => { loadLogs(); loadHealth() }, [loadLogs, loadHealth])
 
   // ── Upload ──────────────────────────────────────────────────────────────────
   const handleFiles = useCallback(async (files: FileList | null) => {
@@ -206,8 +221,23 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-2 text-xs font-mono" style={{ color: 'rgba(255,255,255,0.35)' }}>
-          <span className="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-          ONLINE
+          {health === null ? (
+            <>
+              <span className="inline-block w-2 h-2 rounded-full bg-gray-500 animate-pulse" />
+              CHECKING
+            </>
+          ) : health.status === 'ok' ? (
+            <>
+              <span className="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+              <span style={{ color: '#69db7c' }}>ONLINE</span>
+              <span style={{ color: 'rgba(255,255,255,0.2)' }}>· {Math.floor(health.uptime_seconds)}s uptime</span>
+            </>
+          ) : (
+            <>
+              <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              <span style={{ color: '#ffa94d' }}>DEGRADED</span>
+            </>
+          )}
         </div>
       </header>
 
@@ -267,11 +297,18 @@ export default function Home() {
           {/* File list */}
           <div className="glass-card p-4 flex flex-col gap-2">
             <div className="flex items-center justify-between mb-1">
-              <h2 className="text-sm font-display font-semibold" style={{ color: 'rgba(255,255,255,0.7)', fontFamily: "'Syne', sans-serif" }}>
-                Stored Logs
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-display font-semibold" style={{ color: 'rgba(255,255,255,0.7)', fontFamily: "'Syne', sans-serif" }}>
+                  Stored Logs
+                </h2>
+                {logsPagination.total > 0 && (
+                  <span className="text-xs font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(116,192,252,0.1)', color: '#74c0fc' }}>
+                    {logsPagination.total}
+                  </span>
+                )}
+              </div>
               <button
-                onClick={loadLogs}
+                onClick={() => loadLogs(logsPage)}
                 className="text-xs font-mono px-2 py-1 rounded-lg"
                 style={{ color: 'rgba(255,255,255,0.4)', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
               >
@@ -317,6 +354,31 @@ export default function Home() {
                 </div>
               ))}
             </div>
+
+            {/* Pagination controls */}
+            {logsPagination.total_pages > 1 && (
+              <div className="flex items-center justify-between pt-1 mt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                <button
+                  disabled={logsPagination.page <= 1 || logsLoading}
+                  onClick={() => loadLogs(logsPagination.page - 1)}
+                  className="text-xs font-mono px-2 py-1 rounded-lg disabled:opacity-30"
+                  style={{ color: 'rgba(255,255,255,0.5)', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+                >
+                  ← Prev
+                </button>
+                <span className="text-xs font-mono" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                  {logsPagination.page} / {logsPagination.total_pages}
+                </span>
+                <button
+                  disabled={logsPagination.page >= logsPagination.total_pages || logsLoading}
+                  onClick={() => loadLogs(logsPagination.page + 1)}
+                  className="text-xs font-mono px-2 py-1 rounded-lg disabled:opacity-30"
+                  style={{ color: 'rgba(255,255,255,0.5)', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+                >
+                  Next →
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Analysis settings */}
@@ -505,7 +567,9 @@ export default function Home() {
                       <GapList gaps={result.gaps} />
                       {result.summary.summary_only && (
                         <p className="text-xs font-mono mt-3 text-center" style={{ color: 'rgba(255,255,255,0.3)' }}>
-                          Summary-only mode — per-gap detail suppressed
+                          {result._meta?.forced_summary_only
+                            ? `⚡ Large file (${result._meta?.file_size_bytes ? (result._meta.file_size_bytes / 1024 / 1024).toFixed(1) + ' MB' : '?'}) — auto-switched to summary-only mode`
+                            : 'Summary-only mode — per-gap detail suppressed'}
                         </p>
                       )}
                     </div>
@@ -525,6 +589,14 @@ export default function Home() {
                         ['Backward Jumps',   result.stats.backward_jumps.toLocaleString()],
                         ['Gap Count',        result.stats.gap_count.toLocaleString()],
                         ['Assumed TZ',       result.summary.assumed_tz || 'UTC (naive)'],
+                        ['Threshold Used',   `${result.summary.threshold_seconds}s`],
+                        ['High Threshold',   `${result.summary.high_threshold_seconds}s`],
+                        ['Med Threshold',    `${result.summary.medium_threshold_seconds}s`],
+                        ['Hash Algorithm',   result.stats.hash_algorithm ?? 'sha256'],
+                        ['Log Start',        formatUtcTimestamp(result.stats.log_start_utc)],
+                        ['Log End',          formatUtcTimestamp(result.stats.log_end_utc)],
+                        ['Log Duration',     result.stats.log_duration_seconds != null ? formatDuration(result.stats.log_duration_seconds) : '—'],
+                        ['Line Rate',        result.stats.line_rate_per_second != null ? `${result.stats.line_rate_per_second.toFixed(2)}/s` : '—'],
                         ['Exec Time',        `${result.performance.execution_time_ms.toFixed(3)} ms`],
                       ].map(([label, value]) => (
                         <div key={label} className="flex justify-between items-center glass-card-inset px-3 py-2">
@@ -582,19 +654,20 @@ export default function Home() {
                         low={result.summary.low_severity}
                       />
 
-                      {/* Gap duration breakdown if any */}
-                      {result.gaps.length > 0 && (
+                      {/* Gap duration breakdown — uses summary fields so it works in summary_only mode too */}
+                      {result.summary.total_gaps > 0 && (
                         <div className="mt-4">
-                          <p className="text-xs font-mono mb-2" style={{ color: 'rgba(255,255,255,0.4)' }}>DURATION EXTREMES</p>
-                          <div className="grid grid-cols-2 gap-2">
-                            {[
-                              ['LONGEST', Math.max(...result.gaps.map(g => g.duration_seconds))],
-                              ['SHORTEST', Math.min(...result.gaps.map(g => g.duration_seconds))],
-                            ].map(([label, seconds]) => (
+                          <p className="text-xs font-mono mb-2" style={{ color: 'rgba(255,255,255,0.4)' }}>DURATION STATS</p>
+                          <div className="grid grid-cols-3 gap-2">
+                            {([
+                              ['LONGEST',  result.summary.largest_gap_seconds],
+                              ['AVERAGE',  result.summary.average_gap_seconds],
+                              ['SHORTEST', result.gaps.length > 0 ? Math.min(...result.gaps.map(g => g.duration_seconds)) : null],
+                            ] as [string, number | null][]).map(([label, seconds]) => (
                               <div key={label} className="glass-card-inset px-3 py-2 text-center">
                                 <p className="text-xs font-mono" style={{ color: 'rgba(255,255,255,0.35)' }}>{label}</p>
                                 <p className="text-sm font-display font-bold mt-1" style={{ color: '#74c0fc', fontFamily: "'Syne'" }}>
-                                  {formatDuration(seconds as number)}
+                                  {seconds != null ? formatDuration(seconds) : '—'}
                                 </p>
                               </div>
                             ))}
@@ -621,15 +694,36 @@ export default function Home() {
                   </div>
 
                   {result._meta && (
-                    <div className="glass-card p-4">
-                      <p className="text-xs font-mono mb-2" style={{ color: 'rgba(255,255,255,0.4)' }}>RESULT SAVED</p>
+                    <div className="glass-card p-4 flex flex-col gap-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs font-mono" style={{ color: 'rgba(255,255,255,0.4)' }}>RESULT SAVED</p>
+                        {'schema_version' in result && (
+                          <span className="text-xs font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(116,192,252,0.08)', color: 'rgba(116,192,252,0.5)', border: '1px solid rgba(116,192,252,0.15)' }}>
+                            v{(result as AnalysisResult).schema_version}
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-start gap-2">
                         <IconFile />
                         <p className="text-xs font-mono break-all" style={{ color: 'rgba(116,192,252,0.7)' }}>
                           {result._meta.result_file}
                         </p>
                       </div>
-                      <p className="text-xs font-mono mt-2" style={{ color: 'rgba(255,255,255,0.25)' }}>
+                      {[
+                        ['File Size',   result._meta.file_size_bytes != null ? `${(result._meta.file_size_bytes / 1024).toFixed(1)} KB` : null],
+                        ['Request ID',  result._meta.request_id || null],
+                      ].filter(([, v]) => v != null).map(([label, value]) => (
+                        <div key={label} className="flex justify-between">
+                          <span className="text-xs font-mono" style={{ color: 'rgba(255,255,255,0.3)' }}>{label}</span>
+                          <span className="text-xs font-mono" style={{ color: 'rgba(255,255,255,0.5)' }}>{value}</span>
+                        </div>
+                      ))}
+                      {result._meta.forced_summary_only && (
+                        <p className="text-xs font-mono px-2 py-1 rounded mt-1" style={{ background: 'rgba(255,169,77,0.1)', color: '#ffa94d', border: '1px solid rgba(255,169,77,0.2)' }}>
+                          ⚡ Auto summary-only (large file)
+                        </p>
+                      )}
+                      <p className="text-xs font-mono" style={{ color: 'rgba(255,255,255,0.2)' }}>
                         Stored in backend/results/
                       </p>
                     </div>
